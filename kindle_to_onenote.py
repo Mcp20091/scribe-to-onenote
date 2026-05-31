@@ -18,11 +18,14 @@ import atexit
 import html as htmlmod
 import logging
 import os
+import random
 import re
+import secrets
 import sys
+import time
 from datetime import datetime, timedelta
 from html.parser import HTMLParser
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 import msal
@@ -83,20 +86,86 @@ SECTION_ID = _env("KINDLE_SECTION_ID", "PASTE-YOUR-SECTION-ID-HERE")
 # Mail handling.
 KINDLE_SENDER = _env("KINDLE_SENDER", "do-not-reply@amazon.com")
 DEST_FOLDER_NAME = _env("KINDLE_DEST_FOLDER", "Kindle Scribe")
+# Category stamped on an email once its OneNote page exists, so a later
+# failure (e.g. the "move" call) can't cause a duplicate page on re-run.
+PROCESSED_CATEGORY = _env("KINDLE_PROCESSED_CATEGORY", "Kindle Imported")
 
 # Behaviour / display.
 TIMEZONE = _env("KINDLE_TIMEZONE", "America/New_York")
 EXPIRY_DAYS = int(_env("KINDLE_EXPIRY_DAYS", "7"))
 MAX_PER_RUN = int(_env("KINDLE_MAX_PER_RUN", "25"))
 TIMEOUT = int(_env("KINDLE_HTTP_TIMEOUT", "60"))
+MAX_RETRIES = int(_env("KINDLE_MAX_RETRIES", "4"))
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
-USER_AGENT = "Mozilla/5.0 KindleScribeFetcher/2.0"
+USER_AGENT = "Mozilla/5.0 KindleScribeFetcher/2.1"
 
 # Token cache, persisted next to the script (override with KINDLE_TOKEN_CACHE).
 CACHE_PATH = _env("KINDLE_TOKEN_CACHE", os.path.join(BASE_DIR, "token_cache.json"))
 
 log = logging.getLogger("kindle_to_onenote")
+
+# Shared HTTP session (connection pooling + a single place for defaults).
+SESSION = requests.Session()
+SESSION.headers["User-Agent"] = USER_AGENT
+
+
+# --------------------------------------------------------------------------
+# HTTP with retry/backoff
+# --------------------------------------------------------------------------
+
+# Status codes worth retrying: throttling (429) and transient server errors.
+RETRY_STATUS = {429, 500, 502, 503, 504}
+
+
+def _retry_after_seconds(resp: requests.Response) -> Optional[float]:
+    value = resp.headers.get("Retry-After")
+    if not value:
+        return None
+    try:
+        return float(value)  # Graph sends a delta in seconds
+    except ValueError:
+        return None
+
+
+def _backoff_seconds(attempt: int) -> float:
+    return min(2 ** attempt, 30) + random.uniform(0, 0.5)
+
+
+def http_request(method: str, url: str, **kwargs) -> requests.Response:
+    """Perform an HTTP request, retrying transient failures with backoff.
+
+    Retries on connection errors and on 429/5xx responses, honoring the
+    server's Retry-After header when present. Returns the final response
+    (the caller still decides whether to raise_for_status()).
+    """
+    kwargs.setdefault("timeout", TIMEOUT)
+    last_exc: Optional[Exception] = None
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            resp = SESSION.request(method, url, **kwargs)
+        except requests.RequestException as exc:
+            last_exc = exc
+            if attempt >= MAX_RETRIES:
+                raise
+            delay = _backoff_seconds(attempt)
+            log.warning("  %s %s failed (%s); retrying in %.1fs",
+                        method, url, exc, delay)
+            time.sleep(delay)
+            continue
+
+        if resp.status_code in RETRY_STATUS and attempt < MAX_RETRIES:
+            delay = _retry_after_seconds(resp) or _backoff_seconds(attempt)
+            log.warning("  %s %s -> HTTP %s; retrying in %.1fs",
+                        method, url, resp.status_code, delay)
+            time.sleep(delay)
+            continue
+
+        return resp
+
+    # Unreachable in practice, but keeps type-checkers happy.
+    assert last_exc is not None
+    raise last_exc
 
 
 # --------------------------------------------------------------------------
@@ -176,8 +245,8 @@ class GraphClient:
 
     def get(self, url: str, params: Optional[Dict] = None,
             headers_extra: Optional[Dict] = None) -> dict:
-        r = requests.get(url, headers=self._auth(headers_extra),
-                         params=params, timeout=TIMEOUT)
+        r = http_request("GET", url, headers=self._auth(headers_extra),
+                         params=params)
         r.raise_for_status()
         return r.json()
 
@@ -186,27 +255,51 @@ class GraphClient:
         headers = self._auth({"Content-Type": "application/json"})
         if headers_extra:
             headers.update(headers_extra)
-        r = requests.post(url, headers=headers, json=payload, timeout=TIMEOUT)
+        r = http_request("POST", url, headers=headers, json=payload)
+        r.raise_for_status()
+        return r.json()
+
+    def patch_json(self, url: str, payload: dict) -> dict:
+        headers = self._auth({"Content-Type": "application/json"})
+        r = http_request("PATCH", url, headers=headers, json=payload)
         r.raise_for_status()
         return r.json()
 
     def post_raw(self, url: str, body: bytes, content_type: str) -> requests.Response:
         headers = self._auth({"Content-Type": content_type})
-        r = requests.post(url, headers=headers, data=body, timeout=TIMEOUT)
+        r = http_request("POST", url, headers=headers, data=body)
         r.raise_for_status()
         return r
 
     # -- Mail ---------------------------------------------------------------
 
-    def find_kindle_message_ids(self, max_to_fetch: int = MAX_PER_RUN):
+    def find_kindle_message_ids(self, max_to_fetch: int = MAX_PER_RUN) -> List[str]:
+        """Return Kindle email IDs in the inbox, oldest first.
+
+        Prefers an exact ``$filter`` on the sender address (immediate and
+        precise). Falls back to ``$search`` if the mailbox rejects the
+        filter (e.g. some server configurations), which is fuzzier and
+        relies on the search index.
+        """
         url = f"{GRAPH_BASE}/me/mailFolders/inbox/messages"
-        params = {"$search": f'"from:{KINDLE_SENDER}"', "$top": max_to_fetch}
-        data = self.get(url, params=params,
-                        headers_extra={"ConsistencyLevel": "eventual"})
-        return [m["id"] for m in data.get("value", [])]
+        try:
+            params = {
+                "$filter": f"from/emailAddress/address eq '{KINDLE_SENDER}'",
+                "$orderby": "receivedDateTime asc",
+                "$select": "id",
+                "$top": max_to_fetch,
+            }
+            data = self.get(url, params=params)
+            return [m["id"] for m in data.get("value", [])]
+        except requests.HTTPError as exc:
+            log.warning("$filter query failed (%s); falling back to $search.", exc)
+            params = {"$search": f'"from:{KINDLE_SENDER}"', "$top": max_to_fetch}
+            data = self.get(url, params=params,
+                            headers_extra={"ConsistencyLevel": "eventual"})
+            return [m["id"] for m in data.get("value", [])]
 
     def fetch_message_full(self, msg_id: str) -> dict:
-        params = {"$select": "id,subject,receivedDateTime,from,body"}
+        params = {"$select": "id,subject,receivedDateTime,from,body,categories"}
         return self.get(
             f"{GRAPH_BASE}/me/messages/{msg_id}",
             params=params,
@@ -222,12 +315,28 @@ class GraphClient:
                                  {"displayName": DEST_FOLDER_NAME})
         return created["id"]
 
+    def mark_processed(self, msg_id: str, existing_categories: List[str]) -> None:
+        """Stamp the email with the 'processed' category (idempotency guard)."""
+        cats = list(existing_categories or [])
+        if PROCESSED_CATEGORY not in cats:
+            cats.append(PROCESSED_CATEGORY)
+        self.patch_json(f"{GRAPH_BASE}/me/messages/{msg_id}", {"categories": cats})
+
     def move_message(self, msg_id: str, dest_folder_id: str) -> None:
         url = f"{GRAPH_BASE}/me/messages/{msg_id}/move"
         self.post_json(url, {"destinationId": dest_folder_id})
         log.info("  Moved email to '%s'", DEST_FOLDER_NAME)
 
     # -- OneNote ------------------------------------------------------------
+
+    def list_sections(self) -> List[dict]:
+        url = f"{GRAPH_BASE}/me/onenote/sections"
+        params = {
+            "$select": "id,displayName",
+            "$expand": "parentNotebook($select=displayName)",
+            "$top": 100,
+        }
+        return self.get(url, params=params).get("value", [])
 
     def create_onenote_page(self, body: bytes, content_type: str) -> None:
         url = f"{GRAPH_BASE}/me/onenote/sections/{SECTION_ID}/pages"
@@ -309,10 +418,20 @@ def extract_download_links(body_html: str) -> Dict[str, str]:
 # --------------------------------------------------------------------------
 
 def download_file(url: str) -> bytes:
-    r = requests.get(url, allow_redirects=True,
-                     headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT)
+    r = http_request("GET", url, allow_redirects=True)
     r.raise_for_status()
     return r.content
+
+
+def looks_like_pdf(b: bytes) -> bool:
+    """A real PDF starts with the '%PDF-' magic bytes."""
+    return b[:5] == b"%PDF-"
+
+
+def looks_like_html(b: bytes) -> bool:
+    """Detect an HTML page (e.g. an Amazon 'link expired' error page)."""
+    head = b[:512].lstrip().lower()
+    return head.startswith(b"<!doctype html") or head.startswith(b"<html")
 
 
 def decode_txt_bytes(b: bytes) -> str:
@@ -339,6 +458,15 @@ def _format_page_title(plain_title: str, received_iso_utc: str) -> str:
     dt_received_utc = datetime.fromisoformat(received_iso_utc.replace("Z", "+00:00"))
     received = dt_received_utc.astimezone(ZoneInfo(TIMEZONE))
     return f"{received.strftime('%m/%d/%y')} - {plain_title}"
+
+
+def _make_boundary(*payloads: Optional[bytes]) -> str:
+    """Return a multipart boundary guaranteed not to appear in the payloads."""
+    while True:
+        boundary = "KindleScribe" + secrets.token_hex(16)
+        marker = f"--{boundary}".encode("utf-8")
+        if all(p is None or marker not in p for p in payloads):
+            return boundary
 
 
 def build_onenote_multipart(
@@ -394,7 +522,7 @@ def build_onenote_multipart(
         "</body></html>"
     )
 
-    boundary = "KindleScribeBoundary"
+    boundary = _make_boundary(pdf_bytes, txt_bytes)
     crlf = "\r\n"
     content_type = f"multipart/form-data; boundary={boundary}"
 
@@ -444,8 +572,18 @@ def process_message(client: GraphClient, msg: dict, folder_id: str,
     received = msg["receivedDateTime"]
     body_html = msg["body"]["content"]
     msg_id = msg["id"]
+    categories = msg.get("categories") or []
 
     title = extract_title(subject)
+
+    # Idempotency guard: if a previous run already created the page but failed
+    # to move the email, just retry the move -- never create a second page.
+    if PROCESSED_CATEGORY in categories:
+        log.info("Already imported previously: %s -- retrying move only.", title)
+        if not dry_run:
+            client.move_message(msg_id, folder_id)
+        return
+
     links = extract_download_links(body_html)
     if "pdf" not in links:
         raise RuntimeError("No PDF download link found in this email.")
@@ -454,11 +592,22 @@ def process_message(client: GraphClient, msg: dict, folder_id: str,
 
     pdf_bytes = download_file(links["pdf"])
     log.info("  PDF bytes: %d", len(pdf_bytes))
+    if not looks_like_pdf(pdf_bytes):
+        # Most likely the Amazon link expired and returned an HTML error
+        # page. Raise so the email stays in the inbox for a manual re-send.
+        raise RuntimeError(
+            "Downloaded file is not a valid PDF (the Amazon link may have "
+            "expired). Leaving the email in the inbox.")
 
     txt_bytes: Optional[bytes] = None
     txt_text: Optional[str] = None
     if "txt" in links:
-        txt_bytes = download_file(links["txt"])
+        candidate = download_file(links["txt"])
+        if looks_like_html(candidate):
+            raise RuntimeError(
+                "Downloaded text file looks like an HTML error page (the "
+                "Amazon link may have expired). Leaving the email in the inbox.")
+        txt_bytes = candidate
         txt_text = decode_txt_bytes(txt_bytes)
         log.info("  TXT bytes: %d | text chars: %d", len(txt_bytes), len(txt_text))
     else:
@@ -478,6 +627,8 @@ def process_message(client: GraphClient, msg: dict, folder_id: str,
         txt_text=txt_text,
     )
     client.create_onenote_page(body, content_type)
+    # Stamp as processed *before* moving so a move failure cannot duplicate.
+    client.mark_processed(msg_id, categories)
     client.move_message(msg_id, folder_id)
 
 
@@ -485,8 +636,8 @@ def run(dry_run: bool = False) -> int:
     if SECTION_ID == "PASTE-YOUR-SECTION-ID-HERE":
         raise SystemExit(
             "SECTION_ID is not configured. Set KINDLE_SECTION_ID in your .env "
-            "file (see .env.example) before running."
-        )
+            "file (see .env.example) before running. Tip: run with "
+            "--list-sections to discover it.")
 
     client = GraphClient(get_access_token())
 
@@ -513,12 +664,31 @@ def run(dry_run: bool = False) -> int:
     return 1 if failures else 0
 
 
+def list_sections() -> int:
+    """Print every OneNote section and its ID (a setup-time helper)."""
+    client = GraphClient(get_access_token())
+    sections = client.list_sections()
+    if not sections:
+        print("No OneNote sections found for this account.")
+        return 0
+    print("Notebook / Section -> SECTION_ID")
+    print("-" * 60)
+    for s in sections:
+        notebook = (s.get("parentNotebook") or {}).get("displayName", "?")
+        print(f"{notebook} / {s.get('displayName', '?')} -> {s['id']}")
+    print("\nCopy the desired ID into .env as KINDLE_SECTION_ID.")
+    return 0
+
+
 def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Import Kindle Scribe note emails into Microsoft OneNote.")
     parser.add_argument(
         "--dry-run", action="store_true",
         help="Download and report, but do not create OneNote pages or move emails.")
+    parser.add_argument(
+        "--list-sections", action="store_true",
+        help="List your OneNote sections and their IDs, then exit (setup helper).")
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="Enable debug logging.")
     return parser.parse_args(argv)
@@ -532,6 +702,8 @@ def main(argv=None) -> int:
         datefmt="%Y-%m-%d %H:%M:%S",
         stream=sys.stdout,
     )
+    if args.list_sections:
+        return list_sections()
     return run(dry_run=args.dry_run)
 
 

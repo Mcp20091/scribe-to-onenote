@@ -50,6 +50,20 @@ processed each run, so backlogged or batched notes are all handled.
 > PDF and the text file never get confused. The text file is only downloaded
 > when an actual `Download text file` link is present.
 
+### Reliability built in
+
+- **Expired-link protection.** Amazon's download links expire (≈7 days). The
+  script verifies the download is a real PDF (`%PDF-` magic bytes) before
+  uploading; if a link has expired and returns an HTML error page instead, it
+  raises and **leaves the email in the inbox** rather than creating a broken
+  page and losing the note.
+- **No duplicates.** After a page is created the email is tagged with a
+  category (`Kindle Imported`) *before* it is moved. If a later step fails and
+  the email is processed again, the script retries only the move — it never
+  creates a second page.
+- **Survives throttling/blips.** Microsoft Graph (`429`/`5xx`, honoring
+  `Retry-After`) and Amazon downloads are retried with exponential backoff.
+
 ---
 
 ## Prerequisites
@@ -121,22 +135,23 @@ file is git-ignored so your IDs never get committed.
 
 #### Finding your section ID
 
-The easiest way is to ask Graph once you can authenticate. After setting
-`KINDLE_CLIENT_ID`, temporarily set `KINDLE_SECTION_ID` to any non-placeholder
-value, then run:
+Once `KINDLE_CLIENT_ID` is set, run the built-in helper (this is a one-time
+setup command — it signs you in, prints your sections, and exits):
 
 ```bash
-python - <<'PY'
-import kindle_to_onenote as k
-client = k.GraphClient(k.get_access_token())
-data = client.get(f"{k.GRAPH_BASE}/me/onenote/sections?$select=id,displayName")
-for s in data["value"]:
-    print(s["displayName"], "->", s["id"])
-PY
+python kindle_to_onenote.py --list-sections
 ```
 
-Pick the `id` of the section you want (e.g. the **Quick Notes** section of a
-**Kindle Scribe** notebook) and put it in `.env` as `KINDLE_SECTION_ID`.
+Output looks like:
+
+```text
+Notebook / Section -> SECTION_ID
+------------------------------------------------------------
+Kindle Scribe / Quick Notes -> 0-ABC123...!456
+```
+
+Copy the `id` of the section you want (e.g. the **Quick Notes** section of a
+**Kindle Scribe** notebook) into `.env` as `KINDLE_SECTION_ID`.
 
 You can also use the [Graph Explorer](https://developer.microsoft.com/graph/graph-explorer)
 and run `GET https://graph.microsoft.com/v1.0/me/onenote/sections`.
@@ -157,8 +172,9 @@ Subsequent runs refresh the token silently with no prompts.
 Useful flags:
 
 ```bash
-python kindle_to_onenote.py --dry-run   # download + report, but don't write to OneNote or move mail
-python kindle_to_onenote.py --verbose   # debug logging
+python kindle_to_onenote.py --dry-run        # download + report, but don't write to OneNote or move mail
+python kindle_to_onenote.py --verbose        # debug logging
+python kindle_to_onenote.py --list-sections  # print your OneNote section IDs and exit (setup helper)
 ```
 
 ---
@@ -220,10 +236,12 @@ All settings are read from the environment (and from `.env` if present).
 | `KINDLE_TENANT_ID` | `consumers` | `consumers` for personal accounts; tenant ID for work/school |
 | `KINDLE_SENDER` | `do-not-reply@amazon.com` | Sender address used to find Kindle emails |
 | `KINDLE_DEST_FOLDER` | `Kindle Scribe` | Mail folder for processed emails (created if missing) |
+| `KINDLE_PROCESSED_CATEGORY` | `Kindle Imported` | Category stamped on imported emails (duplicate guard) |
 | `KINDLE_TIMEZONE` | `America/New_York` | IANA timezone for titles/expiry |
 | `KINDLE_EXPIRY_DAYS` | `7` | Amazon link lifetime shown on the page |
 | `KINDLE_MAX_PER_RUN` | `25` | Max emails processed per run |
 | `KINDLE_HTTP_TIMEOUT` | `60` | HTTP timeout (seconds) |
+| `KINDLE_MAX_RETRIES` | `4` | Retry attempts for throttled/transient HTTP errors |
 | `KINDLE_TOKEN_CACHE` | `./token_cache.json` | MSAL token cache path |
 
 ---
