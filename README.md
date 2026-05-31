@@ -1,1 +1,280 @@
 # scribe-to-onenote
+
+Automatically import **Kindle Scribe** handwritten notes into **Microsoft
+OneNote**.
+
+The Kindle Scribe (2022) can't sync to OneNote directly, but it *can* email
+you your notes. Amazon's email doesn't attach the files — it contains
+download links to a **PDF** and, when OCR is enabled, a **searchable PDF**
+plus a **text (`.txt`) file**. This script watches your Outlook/Microsoft 365
+inbox for those emails, downloads the files, creates a nicely formatted
+OneNote page (with the PDF rendered inline, the recognized text, and both
+files attached), and then files the email away so your inbox stays a clean
+work queue.
+
+It runs unattended on a schedule (cron, systemd timer, or Windows Task
+Scheduler) on Windows, Linux, Raspberry Pi, or a small VM/container.
+
+---
+
+## How it works
+
+```
+Kindle Scribe  ──email──▶  Outlook Inbox  ──▶  this script  ──▶  OneNote page
+                                                   │
+                                                   └─▶ email moved to "Kindle Scribe" folder
+```
+
+For each Kindle email from `do-not-reply@amazon.com`, the script:
+
+1. Reads the subject (the quoted note name) and the received timestamp.
+2. Extracts the download links from the email HTML **by anchor text**:
+   - `Download PDF` / `Download Searchable PDF` → the PDF
+   - `Download text file` → the OCR `.txt` file (only if that link exists)
+3. Downloads the PDF (always) and the text file (when present).
+4. Creates a OneNote page in your configured section containing:
+   - **Title:** `MM/DD/YY - <note name>`
+   - A bold **Download PDF** hyperlink to the original Amazon link
+   - An **Expires** line (`received + 7 days`, the Amazon link lifetime)
+   - **Recognized Text** (the OCR text) — only when a `.txt` file exists
+   - **Attachments:** the PDF, and the `.txt` when present
+   - **Note Printout:** the PDF rendered inline
+5. Moves the email into the **Kindle Scribe** mail folder (created if needed).
+
+The inbox is treated as the queue: every matching email still in the inbox is
+processed each run, so backlogged or batched notes are all handled.
+
+> **About the TXT fix:** earlier versions of this script sometimes missed or
+> mis-assigned the text file because they guessed based on link order. This
+> version identifies each link strictly by its anchor text, so the searchable
+> PDF and the text file never get confused. The text file is only downloaded
+> when an actual `Download text file` link is present.
+
+---
+
+## Prerequisites
+
+- Python 3.9+ (3.11+ recommended)
+- A Microsoft account (personal `consumers`, or work/school) with OneNote
+- An [Azure App Registration](#1-create-an-azure-app-registration) (free)
+- Your Kindle configured to email notes to the same mailbox the script reads
+
+---
+
+## Setup
+
+### 1. Create an Azure App Registration
+
+This gives the script permission to read your mail and write to OneNote using
+delegated permissions. **No client secret is required** — it uses the MSAL
+device-code flow.
+
+1. Go to <https://entra.microsoft.com> → **App registrations** → **New
+   registration**.
+2. Name it (e.g. `Kindle to OneNote`).
+3. Supported account types:
+   - Personal Microsoft account → *Personal Microsoft accounts only* (or
+     "Accounts in any org directory and personal Microsoft accounts").
+   - Work/school account → *Accounts in this organizational directory only*.
+4. Leave **Redirect URI** blank. Click **Register**.
+5. On the app's **Authentication** page, enable **Allow public client flows**
+   (this turns on the device-code flow). Save.
+6. On **API permissions** → **Add a permission** → **Microsoft Graph** →
+   **Delegated permissions**, add:
+   - `Notes.ReadWrite`
+   - `Mail.ReadWrite`
+
+   (`offline_access`, `openid`, and `profile` are added automatically by MSAL.)
+7. Copy the **Application (client) ID** — this is your `KINDLE_CLIENT_ID`.
+
+### 2. Install
+
+```bash
+git clone https://github.com/mcp20091/scribe-to-onenote.git
+cd scribe-to-onenote
+
+python -m venv .venv
+# Linux/macOS:
+source .venv/bin/activate
+# Windows (PowerShell):
+# .venv\Scripts\Activate.ps1
+
+pip install -r requirements.txt
+```
+
+> **Tip:** don't share a virtualenv between Windows and Linux. Create a
+> separate `.venv` per OS and reinstall from `requirements.txt`.
+
+### 3. Configure
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and set at least:
+
+- `KINDLE_CLIENT_ID` — the Application (client) ID from step 1
+- `KINDLE_SECTION_ID` — the OneNote section to write to (see below)
+
+All other settings have sensible defaults (see `.env.example`). The `.env`
+file is git-ignored so your IDs never get committed.
+
+#### Finding your section ID
+
+The easiest way is to ask Graph once you can authenticate. After setting
+`KINDLE_CLIENT_ID`, temporarily set `KINDLE_SECTION_ID` to any non-placeholder
+value, then run:
+
+```bash
+python - <<'PY'
+import kindle_to_onenote as k
+client = k.GraphClient(k.get_access_token())
+data = client.get(f"{k.GRAPH_BASE}/me/onenote/sections?$select=id,displayName")
+for s in data["value"]:
+    print(s["displayName"], "->", s["id"])
+PY
+```
+
+Pick the `id` of the section you want (e.g. the **Quick Notes** section of a
+**Kindle Scribe** notebook) and put it in `.env` as `KINDLE_SECTION_ID`.
+
+You can also use the [Graph Explorer](https://developer.microsoft.com/graph/graph-explorer)
+and run `GET https://graph.microsoft.com/v1.0/me/onenote/sections`.
+
+### 4. First run (authenticate)
+
+Run it once interactively to complete sign-in:
+
+```bash
+python kindle_to_onenote.py
+```
+
+It prints a URL and a device code. Open the URL in any browser, enter the
+code, and approve the requested permissions. A `token_cache.json` file is
+written next to the script (git-ignored — it holds your refresh token).
+Subsequent runs refresh the token silently with no prompts.
+
+Useful flags:
+
+```bash
+python kindle_to_onenote.py --dry-run   # download + report, but don't write to OneNote or move mail
+python kindle_to_onenote.py --verbose   # debug logging
+```
+
+---
+
+## Scheduling
+
+### Linux / Raspberry Pi — cron
+
+Edit your crontab (`crontab -e`) and add one of these. Use absolute paths to
+the venv's Python and to the script, and redirect output to a log:
+
+```cron
+# Every 15 minutes
+*/15 * * * * /home/USER/scribe-to-onenote/.venv/bin/python /home/USER/scribe-to-onenote/kindle_to_onenote.py >> /home/USER/scribe-to-onenote/kindle.log 2>&1
+```
+
+A copy lives in [`deploy/crontab.example`](deploy/crontab.example).
+
+### Linux — systemd timer (alternative to cron)
+
+Copy the unit files from [`deploy/`](deploy/), edit the paths/user, then:
+
+```bash
+sudo cp deploy/kindle-to-onenote.service deploy/kindle-to-onenote.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now kindle-to-onenote.timer
+systemctl list-timers kindle-to-onenote.timer   # verify
+journalctl -u kindle-to-onenote.service -f       # watch logs
+```
+
+### Windows — Task Scheduler
+
+Create a Basic Task that runs:
+
+```
+Program:   C:\path\to\scribe-to-onenote\.venv\Scripts\python.exe
+Arguments: C:\path\to\scribe-to-onenote\kindle_to_onenote.py
+Start in:  C:\path\to\scribe-to-onenote
+```
+
+Trigger it every 15 minutes (or your preference). Do the very first run
+manually so the device-code sign-in can complete.
+
+### Log rotation (Linux)
+
+A sample is provided in [`deploy/logrotate.example`](deploy/logrotate.example).
+Install it as `/etc/logrotate.d/kindle` and adjust the path.
+
+---
+
+## Configuration reference
+
+All settings are read from the environment (and from `.env` if present).
+
+| Variable | Default | Description |
+|---|---|---|
+| `KINDLE_CLIENT_ID` | *(required)* | Azure app **Application (client) ID** |
+| `KINDLE_SECTION_ID` | *(required)* | OneNote **section** ID to create pages in |
+| `KINDLE_TENANT_ID` | `consumers` | `consumers` for personal accounts; tenant ID for work/school |
+| `KINDLE_SENDER` | `do-not-reply@amazon.com` | Sender address used to find Kindle emails |
+| `KINDLE_DEST_FOLDER` | `Kindle Scribe` | Mail folder for processed emails (created if missing) |
+| `KINDLE_TIMEZONE` | `America/New_York` | IANA timezone for titles/expiry |
+| `KINDLE_EXPIRY_DAYS` | `7` | Amazon link lifetime shown on the page |
+| `KINDLE_MAX_PER_RUN` | `25` | Max emails processed per run |
+| `KINDLE_HTTP_TIMEOUT` | `60` | HTTP timeout (seconds) |
+| `KINDLE_TOKEN_CACHE` | `./token_cache.json` | MSAL token cache path |
+
+---
+
+## Security notes
+
+- `token_cache.json` contains a **refresh token** for your account. It is
+  git-ignored — keep it private and never commit it.
+- `.env` holds your IDs and is git-ignored.
+- The script uses **delegated** permissions scoped to *your* mailbox and
+  OneNote only. No client secret is stored.
+
+---
+
+## Troubleshooting
+
+- **`CLIENT_ID is not configured` / `SECTION_ID is not configured`** — fill in
+  `.env` (see [Configure](#3-configure)).
+- **No emails processed** — confirm the Kindle emails are in the **Inbox**
+  (not already filed by a rule) and that `KINDLE_SENDER` matches the actual
+  sender. The `$search` query requires the message to be in the inbox.
+- **PDF renders but text is missing** — the email had no OCR text file. Enable
+  "Convert to text (OCR)" when sending from the Kindle to get a `Download text
+  file` link.
+- **Auth prompts every run** — the token cache isn't being saved/found. Check
+  the script can write `token_cache.json` (or set `KINDLE_TOKEN_CACHE` to a
+  writable path), and that the same path is used each run (matters for cron —
+  use absolute paths).
+- **`403`/permission errors** — make sure `Notes.ReadWrite` and
+  `Mail.ReadWrite` delegated permissions are added and that you consented to
+  them during the first sign-in.
+
+---
+
+## Project layout
+
+```
+scribe-to-onenote/
+├── kindle_to_onenote.py        # the script
+├── requirements.txt            # Python dependencies
+├── .env.example                # copy to .env and fill in
+├── .gitignore
+├── deploy/
+│   ├── kindle-to-onenote.service
+│   ├── kindle-to-onenote.timer
+│   ├── crontab.example
+│   └── logrotate.example
+├── LICENSE
+└── README.md
+```
+
+## License
+
+[MIT](LICENSE)

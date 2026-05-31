@@ -1,0 +1,12 @@
+# Add to your user crontab with: crontab -e
+# Use ABSOLUTE paths to the venv's python and the script.
+# Adjust the path (here /home/USER/scribe-to-onenote) to your install.
+
+# Every 15 minutes
+*/15 * * * * /home/USER/scribe-to-onenote/.venv/bin/python /home/USER/scribe-to-onenote/kindle_to_onenote.py >> /home/USER/scribe-to-onenote/kindle.log 2>&1
+
+# Every 5 minutes
+# */5 * * * * /home/USER/scribe-to-onenote/.venv/bin/python /home/USER/scribe-to-onenote/kindle_to_onenote.py >> /home/USER/scribe-to-onenote/kindle.log 2>&1
+
+# Every minute
+# * * * * * /home/USER/scribe-to-onenote/.venv/bin/python /home/USER/scribe-to-onenote/kindle_to_onenote.py >> /home/USER/scribe-to-onenote/kindle.log 2>&1

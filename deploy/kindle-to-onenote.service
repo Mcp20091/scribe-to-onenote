@@ -1,0 +1,13 @@
+# Install to /etc/systemd/system/kindle-to-onenote.service
+# Edit User and the two absolute paths, then:
+#   sudo systemctl daemon-reload
+[Unit]
+Description=Import Kindle Scribe notes into OneNote
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=michael
+WorkingDirectory=/home/michael/scribe-to-onenote
+ExecStart=/home/michael/scribe-to-onenote/.venv/bin/python /home/michael/scribe-to-onenote/kindle_to_onenote.py

@@ -1,0 +1,12 @@
+# Install to /etc/systemd/system/kindle-to-onenote.timer then:
+#   sudo systemctl enable --now kindle-to-onenote.timer
+[Unit]
+Description=Run Kindle->OneNote import every 15 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+# Install to /etc/logrotate.d/kindle (edit the path to your kindle.log).
+# Keeps the cron log from growing without bound.
+/home/USER/scribe-to-onenote/kindle.log {
+    size 1M
+    rotate 5
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}

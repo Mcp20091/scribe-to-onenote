@@ -1,0 +1,23 @@
+# Secrets / local config
+.env
+
+# MSAL token cache (contains your refresh token!)
+token_cache.json
+
+# Logs
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.mypy_cache/
+.pytest_cache/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
