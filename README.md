@@ -25,17 +25,24 @@ Scheduler) on Windows, Linux, Raspberry Pi, or a small VM/container.
 ## How it works
 
 ```mermaid
-flowchart TD
-    K["📝 Kindle Scribe<br/>emails a note (PDF + optional OCR text)"]
-    I["📥 Outlook Inbox<br/>(the work queue)"]
-    F["🔎 Find mail from the Kindle sender<br/>do-not-reply@amazon.com"]
-    D["⬇️ Download PDF<br/>+ text file (when present)"]
-    T1["🏷️ Tag email:<br/>'Kindle Scribe'"]
-    P["📄 Create OneNote page<br/>in your section"]
-    T2["🏷️ Tag email:<br/>'Uploaded to OneNote'"]
-    M["📂 Move email to the<br/>'Kindle Scribe' folder"]
-
-    K --> I --> F --> D --> T1 --> P --> T2 --> M
+flowchart TB
+    subgraph r1 [" "]
+        direction LR
+        K["📝 Kindle Scribe<br/>emails a note"] --> I["📥 Outlook Inbox<br/>(work queue)"] --> F["🔎 Match sender<br/>do-not-reply@amazon.com"]
+    end
+    subgraph r2 [" "]
+        direction RL
+        D["⬇️ Download PDF<br/>+ text (if present)"] --> T1["🏷️ Tag email:<br/>'Kindle Scribe'"] --> P["📄 Create<br/>OneNote page"]
+    end
+    subgraph r3 [" "]
+        direction LR
+        T2["🏷️ Tag email:<br/>'Uploaded to OneNote'"] --> M["📂 Move to<br/>'Kindle Scribe' folder"]
+    end
+    F --> D
+    P --> T2
+    style r1 fill:none,stroke:none
+    style r2 fill:none,stroke:none
+    style r3 fill:none,stroke:none
 ```
 
 The inbox is the queue: every matching email still in the Inbox is processed
