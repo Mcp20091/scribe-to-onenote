@@ -548,6 +548,16 @@ def _format_page_title(plain_title: str, received_iso_utc: str) -> str:
     return f"{received.strftime('%m/%d/%y')} - {plain_title}"
 
 
+def _local_iso(received_iso_utc: str) -> str:
+    """Received time in the configured timezone, ISO 8601 with offset.
+
+    Used for the page's <meta name="created">. OneNote shows the literal time,
+    so we hand it local time (e.g. 2026-06-02T04:08:50-04:00) rather than UTC.
+    """
+    dt = datetime.fromisoformat(received_iso_utc.replace("Z", "+00:00"))
+    return dt.astimezone(ZoneInfo(TIMEZONE)).isoformat()
+
+
 def _make_boundary(*payloads: Optional[bytes]) -> str:
     """Return a multipart boundary guaranteed not to appear in the payloads."""
     while True:
@@ -585,20 +595,28 @@ def build_onenote_multipart(
             f"<pre>{htmlmod.escape(txt_text)}</pre>"
         )
 
-    attachments_html = (
-        "<p><b>Attachments:</b></p>"
+    # Lay the attachment icons out side by side in a one-row, borderless table
+    # (bare <object> elements are block-level and would stack vertically).
+    cells = (
+        '<td style="padding-right:24px">'
         '<object data="name:scribe.pdf" data-attachment="kindle.pdf" '
-        'type="application/pdf"></object>'
+        'type="application/pdf"></object></td>'
     )
     if txt_bytes is not None:
-        attachments_html += (
+        cells += (
+            "<td>"
             '<object data="name:note.txt" data-attachment="kindle.txt" '
-            'type="text/plain"></object>'
+            'type="text/plain"></object></td>'
         )
+    attachments_html = (
+        "<p><b>Attachments:</b></p>"
+        f'<table border="0"><tr>{cells}</tr></table>'
+    )
 
     # Declaring UTF-8 ensures non-ASCII OCR text/titles decode correctly, and
     # <meta name="created"> sets the page's date to when the note was emailed.
-    safe_created = htmlmod.escape(received_iso_utc, quote=True)
+    # Use local time (with offset) so OneNote shows the right wall-clock time.
+    safe_created = htmlmod.escape(_local_iso(received_iso_utc), quote=True)
     html_page = (
         "<!DOCTYPE html>"
         "<html><head>"
