@@ -24,25 +24,22 @@ Scheduler) on Windows, Linux, Raspberry Pi, or a small VM/container.
 
 ## How it works
 
-```mermaid
-flowchart TB
-    subgraph r1 [" "]
-        direction LR
-        K["📝 Kindle Scribe<br/>emails a note"] --> I["📥 Outlook Inbox<br/>(work queue)"] --> F["🔎 Match sender<br/>do-not-reply@amazon.com"]
-    end
-    subgraph r2 [" "]
-        direction RL
-        D["⬇️ Download PDF<br/>+ text (if present)"] --> T1["🏷️ Tag email:<br/>'Kindle Scribe'"] --> P["📄 Create<br/>OneNote page"]
-    end
-    subgraph r3 [" "]
-        direction LR
-        T2["🏷️ Tag email:<br/>'Uploaded to OneNote'"] --> M["📂 Move to<br/>'Kindle Scribe' folder"]
-    end
-    F --> D
-    P --> T2
-    style r1 fill:none,stroke:none
-    style r2 fill:none,stroke:none
-    style r3 fill:none,stroke:none
+```text
+ ┌─────────────────────┐      ┌─────────────────────┐      ┌─────────────────────┐
+ │ 1) Kindle Scribe    │ ──▶  │ 2) Outlook Inbox    │ ──▶  │ 3) Match the sender │
+ │    emails a note    │      │    (the work queue) │      │    (Amazon)         │
+ └─────────────────────┘      └─────────────────────┘      └──────────┬──────────┘
+                                                                       │
+ ┌─────────────────────┐      ┌─────────────────────┐      ┌──────────▼──────────┐
+ │ 6) Create OneNote   │ ◀──  │ 5) Tag email:       │ ◀──  │ 4) Download PDF     │
+ │    page (printout)  │      │    "Kindle Scribe"  │      │    + text (if any)  │
+ └──────────┬──────────┘      └─────────────────────┘      └─────────────────────┘
+            │
+ ┌──────────▼──────────┐      ┌─────────────────────┐
+ │ 7) Tag email:       │ ──▶  │ 8) Move email to    │
+ │    "Uploaded to     │      │    the "Kindle      │
+ │     OneNote"        │      │     Scribe" folder  │
+ └─────────────────────┘      └─────────────────────┘
 ```
 
 The inbox is the queue: every matching email still in the Inbox is processed
