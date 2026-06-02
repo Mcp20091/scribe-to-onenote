@@ -27,8 +27,13 @@ Scheduler) on Windows, Linux, Raspberry Pi, or a small VM/container.
 ```
 Kindle Scribe  ──email──▶  Outlook Inbox  ──▶  this script  ──▶  OneNote page
                                                    │
-                                                   └─▶ email moved to "Kindle Scribe" folder
+                                                   ├─▶ tag email: "Kindle Scribe", then
+                                                   │              "Uploaded to OneNote"
+                                                   └─▶ move email to the "Kindle Scribe" folder
 ```
+
+(The category names and the destination folder are the defaults — all
+configurable; see [Categories & folder](#categories--folder).)
 
 For each Kindle email from `do-not-reply@amazon.com`, the script:
 

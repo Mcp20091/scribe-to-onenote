@@ -10,4 +10,10 @@ Wants=network-online.target
 Type=oneshot
 User=michael
 WorkingDirectory=/home/michael/scribe-to-onenote
+# Configuration: the script auto-loads the .env file next to it. To set or
+# override variables here instead, use either of the following (optional):
+#EnvironmentFile=/home/michael/scribe-to-onenote/.env
+#Environment=KINDLE_DEST_FOLDER=Kindle Scribe
+#Environment=KINDLE_TAG1=Kindle Scribe
+#Environment=KINDLE_TAG2=Uploaded to OneNote
 ExecStart=/home/michael/scribe-to-onenote/.venv/bin/python /home/michael/scribe-to-onenote/kindle_to_onenote.py
