@@ -112,6 +112,15 @@ registration and re-run `--login` to consent. If the permission is missing the
 script logs a warning and carries on (emails still get categorized, just
 uncolored).
 
+You can view your current categories and their colors with this pre-filled
+[Graph Explorer query for your master categories][ge-categories]:
+
+```text
+GET https://graph.microsoft.com/v1.0/me/outlook/masterCategories
+```
+
+[ge-categories]: https://developer.microsoft.com/graph/graph-explorer?request=me/outlook/masterCategories&method=GET&version=v1.0&GraphUrl=https://graph.microsoft.com
+
 ### Known limitation: 4 MB page size
 
 Microsoft Graph caps a OneNote page-creation request at **~4 MB**. Because the
@@ -224,12 +233,20 @@ Kindle Scribe / Quick Notes -> 0-ABC123...!456
 Copy the `id` of the section you want (e.g. the **Quick Notes** section of a
 **Kindle Scribe** notebook) into `.env` as `KINDLE_SECTION_ID`.
 
-You can also use the [Graph Explorer](https://developer.microsoft.com/graph/graph-explorer)
-and run:
+**Prefer a browser?** Open this pre-filled
+[Graph Explorer query for your sections][ge-sections] (sign in with the same
+Microsoft account, then click **Run query**) and read the `id` from the
+response. The underlying request is:
 
 ```text
 GET https://graph.microsoft.com/v1.0/me/onenote/sections
 ```
+
+If you're not sure which notebook a section belongs to, this
+[query for your notebooks][ge-notebooks] lists them too.
+
+[ge-sections]: https://developer.microsoft.com/graph/graph-explorer?request=me/onenote/sections&method=GET&version=v1.0&GraphUrl=https://graph.microsoft.com
+[ge-notebooks]: https://developer.microsoft.com/graph/graph-explorer?request=me/onenote/notebooks&method=GET&version=v1.0&GraphUrl=https://graph.microsoft.com
 
 ### 4. First run (authenticate)
 
