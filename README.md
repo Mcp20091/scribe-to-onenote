@@ -24,23 +24,7 @@ Scheduler) on Windows, Linux, Raspberry Pi, or a small VM/container.
 
 ## How it works
 
-```text
- ┌─────────────────────┐      ┌─────────────────────┐      ┌─────────────────────┐
- │ 1) Kindle Scribe    │ ──▶  │ 2) Outlook Inbox    │ ──▶  │ 3) Match the sender │
- │    emails a note    │      │    (the work queue) │      │    (Amazon)         │
- └─────────────────────┘      └─────────────────────┘      └──────────┬──────────┘
-                                                                       │
- ┌─────────────────────┐      ┌─────────────────────┐      ┌──────────▼──────────┐
- │ 6) Create OneNote   │ ◀──  │ 5) Tag email:       │ ◀──  │ 4) Download PDF     │
- │    page (printout)  │      │    "Kindle Scribe"  │      │    + text (if any)  │
- └──────────┬──────────┘      └─────────────────────┘      └─────────────────────┘
-            │
- ┌──────────▼──────────┐      ┌─────────────────────┐
- │ 7) Tag email:       │ ──▶  │ 8) Move email to    │
- │    "Uploaded to     │      │    the "Kindle      │
- │     OneNote"        │      │     Scribe" folder  │
- └─────────────────────┘      └─────────────────────┘
-```
+![Workflow: (1) Kindle Scribe emails a note -> (2) Outlook Inbox -> (3) match the sender, then down to (4) download PDF + text -> (5) tag "Kindle Scribe" -> (6) create OneNote page, then down to (7) tag "Uploaded to OneNote" -> (8) move the email to the "Kindle Scribe" folder](docs/workflow.svg)
 
 The inbox is the queue: every matching email still in the Inbox is processed
 each run, so backlogged or batched notes are all handled. After a note is
