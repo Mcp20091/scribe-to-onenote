@@ -1,6 +1,10 @@
 # Add to your user crontab with: crontab -e
 # Use ABSOLUTE paths to the venv's python and the script.
 # Adjust the path (here /home/USER/scribe-to-onenote) to your install.
+#
+# Configuration (folder, categories, etc.) is read from the .env file next to
+# the script, so no variables are needed here. To override on the command line
+# instead, append flags, e.g. ... kindle_to_onenote.py --folder "Scribe Notes"
 
 # Every 15 minutes
 */15 * * * * /home/USER/scribe-to-onenote/.venv/bin/python /home/USER/scribe-to-onenote/kindle_to_onenote.py >> /home/USER/scribe-to-onenote/kindle.log 2>&1
