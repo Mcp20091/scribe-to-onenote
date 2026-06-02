@@ -154,6 +154,10 @@ re-send. (Most single notes are well under 4 MB.)
 
 ## Setup
 
+> 🐧 On a **Proxmox Debian LXC / VM / Raspberry Pi**? There's a complete
+> copy-paste walkthrough in **[docs/debian-lxc-setup.md](docs/debian-lxc-setup.md)**
+> (do the Azure step below first to get your client ID).
+
 ### 1. Create an Azure app registration
 
 The script signs in **as you** (delegated permissions) and needs **no client
@@ -311,6 +315,11 @@ python kindle_to_onenote.py --manage-categories                    # also create
 ---
 
 ## Headless / LXC / VM notes
+
+> 📋 **Step-by-step:** for a complete, copy-paste setup on a fresh Proxmox
+> Debian LXC (packages, clone, venv, sign-in, and a systemd timer), see
+> **[docs/debian-lxc-setup.md](docs/debian-lxc-setup.md)**. The notes below
+> explain *why* it works headless.
 
 This tool is built to run unattended on a headless box (e.g. a Proxmox LXC
 container, a VM, or a Raspberry Pi). A few things that make that work cleanly:
@@ -481,6 +490,9 @@ scribe-to-onenote/
 │   ├── kindle-to-onenote.timer
 │   ├── crontab.example
 │   └── logrotate.example
+├── docs/
+│   ├── debian-lxc-setup.md     # step-by-step Proxmox/Debian LXC guide
+│   └── workflow.svg            # the diagram in this README
 ├── LICENSE
 └── README.md
 ```
