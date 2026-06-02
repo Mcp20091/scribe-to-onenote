@@ -151,12 +151,21 @@ device-code flow.
 5. On the app's **Authentication** page, enable **Allow public client flows**
    (this turns on the device-code flow). Save.
 6. On **API permissions** → **Add a permission** → **Microsoft Graph** →
-   **Delegated permissions**, add:
-   - `Notes.ReadWrite`
-   - `Mail.ReadWrite`
-   - `MailboxSettings.ReadWrite` — *only* if you want colored categories via
-     `--manage-categories` (see [Categories & folder](#categories--folder)).
-     You can skip it and add it later.
+   **Delegated permissions**, search for and add each of these (copy/paste the
+   exact names into the permission search box):
+
+   ```text
+   Notes.ReadWrite
+   Mail.ReadWrite
+   ```
+
+   Optionally — *only* if you want colored categories via `--manage-categories`
+   (see [Categories & folder](#categories--folder)); you can skip it and add it
+   later:
+
+   ```text
+   MailboxSettings.ReadWrite
+   ```
 
    (`offline_access`, `openid`, and `profile` are added automatically by MSAL.)
 7. Copy the **Application (client) ID** — this is your `KINDLE_CLIENT_ID`.
@@ -216,7 +225,11 @@ Copy the `id` of the section you want (e.g. the **Quick Notes** section of a
 **Kindle Scribe** notebook) into `.env` as `KINDLE_SECTION_ID`.
 
 You can also use the [Graph Explorer](https://developer.microsoft.com/graph/graph-explorer)
-and run `GET https://graph.microsoft.com/v1.0/me/onenote/sections`.
+and run:
+
+```text
+GET https://graph.microsoft.com/v1.0/me/onenote/sections
+```
 
 ### 4. First run (authenticate)
 
