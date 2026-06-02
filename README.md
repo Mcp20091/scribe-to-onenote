@@ -53,9 +53,6 @@ For each Kindle email from `do-not-reply@amazon.com`, the script:
 5. Tags the email with the **`Uploaded to OneNote`** category (confirmation),
    then moves it into the **Kindle Scribe** mail folder (created if needed).
 
-The category names and the folder are configurable — see
-[Categories & folder](#categories--folder).
-
 The inbox is treated as the queue: every matching email still in the inbox is
 processed each run, so backlogged or batched notes are all handled.
 
@@ -167,7 +164,7 @@ device-code flow.
 ### 2. Install
 
 ```bash
-git clone https://github.com/mcp20091/scribe-to-onenote.git
+git clone https://github.com/Mcp20091/scribe-to-onenote.git
 cd scribe-to-onenote
 
 python -m venv .venv
@@ -388,9 +385,10 @@ exits with a clear message if either is missing.
 
 - **`CLIENT_ID is not configured` / `SECTION_ID is not configured`** — fill in
   `.env` (see [Configure](#3-configure)).
-- **No emails processed** — confirm the Kindle emails are in the **Inbox**
-  (not already filed by a rule) and that `KINDLE_SENDER` matches the actual
-  sender. The `$search` query requires the message to be in the inbox.
+- **No emails processed** — the script only looks in the **Inbox** folder, so
+  confirm the Kindle emails are there (not already filed by a rule) and that
+  `KINDLE_SENDER` matches the actual sender. (It matches the sender with an
+  exact `$filter`, falling back to `$search` if the mailbox rejects it.)
 - **PDF renders but text is missing** — the email had no OCR text file. Enable
   "Convert to text (OCR)" when sending from the Kindle to get a `Download text
   file` link.
@@ -403,7 +401,8 @@ exits with a clear message if either is missing.
   use absolute paths).
 - **`403`/permission errors** — make sure `Notes.ReadWrite` and
   `Mail.ReadWrite` delegated permissions are added and that you consented to
-  them during the first sign-in.
+  them during the first sign-in. If you use `--manage-categories`, also add
+  `MailboxSettings.ReadWrite` and re-run `--login`.
 
 ---
 
