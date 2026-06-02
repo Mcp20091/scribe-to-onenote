@@ -77,7 +77,8 @@ def _env(name: str, default: str) -> str:
 CLIENT_ID = _env("KINDLE_CLIENT_ID", "YOUR-APP-CLIENT-ID")
 TENANT_ID = _env("KINDLE_TENANT_ID", "consumers")  # "consumers" = personal MS accounts
 AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
-# MSAL adds openid/profile/offline_access automatically.
+# MSAL adds openid/profile/offline_access automatically. MailboxSettings is
+# appended below only when category color management is enabled.
 SCOPES = ["Notes.ReadWrite", "Mail.ReadWrite"]
 
 # OneNote destination -- the *section* ID inside the "Kindle Scribe" notebook.
@@ -85,10 +86,27 @@ SECTION_ID = _env("KINDLE_SECTION_ID", "PASTE-YOUR-SECTION-ID-HERE")
 
 # Mail handling.
 KINDLE_SENDER = _env("KINDLE_SENDER", "do-not-reply@amazon.com")
-DEST_FOLDER_NAME = _env("KINDLE_DEST_FOLDER", "Kindle Scribe")
-# Category stamped on an email once its OneNote page exists, so a later
-# failure (e.g. the "move" call) can't cause a duplicate page on re-run.
-PROCESSED_CATEGORY = _env("KINDLE_PROCESSED_CATEGORY", "Kindle Imported")
+DEST_FOLDER_NAME = _env("KINDLE_DEST_FOLDER", "Kindle Scribe")  # override: --folder
+
+# Outlook categories applied to processed emails (override: --tag1 / --tag2).
+#   TAG1 is added when a note is picked up for processing.
+#   TAG2 is added only after the OneNote page is confirmed created. TAG2 also
+#   acts as the duplicate guard: if it's already present, the page exists, so a
+#   re-run just retries the move instead of creating a second page.
+TAG1 = _env("KINDLE_TAG1", "Kindle Scribe")
+TAG2 = _env("KINDLE_TAG2", "Uploaded to OneNote")
+# Colors used only when category management is enabled (Outlook preset names).
+TAG1_COLOR = _env("KINDLE_TAG1_COLOR", "preset7")  # blue
+TAG2_COLOR = _env("KINDLE_TAG2_COLOR", "preset4")  # green
+# Assigning a category to a message always works (Mail.ReadWrite); but an
+# unknown category shows without a color until it exists in the mailbox master
+# list. Enabling this creates the categories (with the colors above) in the
+# master list so they show colored -- which needs MailboxSettings.ReadWrite and
+# a re-consent (re-run --login). Override: --manage-categories.
+MANAGE_CATEGORIES = _env("KINDLE_MANAGE_CATEGORIES", "false").lower() in (
+    "1", "true", "yes", "on")
+if MANAGE_CATEGORIES:
+    SCOPES.append("MailboxSettings.ReadWrite")
 
 # Behaviour / display.
 TIMEZONE = _env("KINDLE_TIMEZONE", "America/New_York")
@@ -343,12 +361,51 @@ class GraphClient:
                                  {"displayName": DEST_FOLDER_NAME})
         return created["id"]
 
-    def mark_processed(self, msg_id: str, existing_categories: List[str]) -> None:
-        """Stamp the email with the 'processed' category (idempotency guard)."""
-        cats = list(existing_categories or [])
-        if PROCESSED_CATEGORY not in cats:
-            cats.append(PROCESSED_CATEGORY)
-        self.patch_json(f"{GRAPH_BASE}/me/messages/{msg_id}", {"categories": cats})
+    def add_categories(self, msg_id: str, existing: List[str], *names: str) -> List[str]:
+        """Add one or more categories to a message; returns the new list.
+
+        Assigning a category works even if it isn't in the mailbox master list
+        (it just shows uncolored until then). Only PATCHes if something changed.
+        """
+        cats = list(existing or [])
+        changed = False
+        for name in names:
+            if name and name not in cats:
+                cats.append(name)
+                changed = True
+        if changed:
+            self.patch_json(f"{GRAPH_BASE}/me/messages/{msg_id}", {"categories": cats})
+            log.info("  Categorized: %s", ", ".join(names))
+        return cats
+
+    def get_master_categories(self) -> set:
+        data = self.get(f"{GRAPH_BASE}/me/outlook/masterCategories",
+                        params={"$select": "displayName", "$top": 100})
+        return {c.get("displayName") for c in data.get("value", [])}
+
+    def ensure_master_categories(self, wanted: List[Tuple[str, str]]) -> None:
+        """Create any missing (name, color) categories in the master list.
+
+        Best-effort: needs MailboxSettings.ReadWrite. If that's not granted, log
+        a warning and continue -- per-message categorization still works, the
+        categories just won't be colored.
+        """
+        try:
+            existing = self.get_master_categories()
+        except requests.HTTPError as exc:
+            log.warning("Could not read Outlook master categories (%s); "
+                        "categories will be applied without managed colors. "
+                        "Grant MailboxSettings.ReadWrite and re-run --login to "
+                        "enable colors.", exc)
+            return
+        for name, color in wanted:
+            if name and name not in existing:
+                try:
+                    self.post_json(f"{GRAPH_BASE}/me/outlook/masterCategories",
+                                   {"displayName": name, "color": color})
+                    log.info("Created Outlook category '%s' (%s).", name, color)
+                except requests.HTTPError as exc:
+                    log.warning("Could not create category '%s' (%s).", name, exc)
 
     def move_message(self, msg_id: str, dest_folder_id: str) -> None:
         url = f"{GRAPH_BASE}/me/messages/{msg_id}/move"
@@ -611,10 +668,11 @@ def process_message(client: GraphClient, msg: dict, folder_id: str,
 
     title = extract_title(subject)
 
-    # Idempotency guard: if a previous run already created the page but failed
-    # to move the email, just retry the move -- never create a second page.
-    if PROCESSED_CATEGORY in categories:
-        log.info("Already imported previously: %s -- retrying move only.", title)
+    # Idempotency guard: TAG2 is only set after a page is confirmed created. If
+    # it's already present, a previous run made the page but didn't finish the
+    # move -- just retry the move, never create a second page.
+    if TAG2 in categories:
+        log.info("Already uploaded previously: %s -- retrying move only.", title)
         if not dry_run:
             client.move_message(msg_id, folder_id)
         return
@@ -624,6 +682,11 @@ def process_message(client: GraphClient, msg: dict, folder_id: str,
         raise RuntimeError("No PDF download link found in this email.")
 
     log.info("Processing: %s", title)
+
+    # Tag the email as picked up (TAG1) before doing the work, so even a note
+    # that later fails to upload is still marked.
+    if not dry_run:
+        categories = client.add_categories(msg_id, categories, TAG1)
 
     pdf_bytes = download_file(links["pdf"])
     log.info("  PDF bytes: %d", len(pdf_bytes))
@@ -649,7 +712,7 @@ def process_message(client: GraphClient, msg: dict, folder_id: str,
         log.info("  No text file in this email (PDF only).")
 
     if dry_run:
-        log.info("  [dry-run] Would create OneNote page and move email.")
+        log.info("  [dry-run] Would create OneNote page, categorize, and move email.")
         return
 
     page_title = _format_page_title(title, received)
@@ -662,8 +725,8 @@ def process_message(client: GraphClient, msg: dict, folder_id: str,
         txt_text=txt_text,
     )
     client.create_onenote_page(body, content_type)
-    # Stamp as processed *before* moving so a move failure cannot duplicate.
-    client.mark_processed(msg_id, categories)
+    # Confirmed: stamp TAG2 *before* moving so a move failure cannot duplicate.
+    client.add_categories(msg_id, categories, TAG1, TAG2)
     client.move_message(msg_id, folder_id)
 
 
@@ -685,6 +748,8 @@ def run(dry_run: bool = False, interactive: bool = True) -> int:
     msgs.sort(key=lambda m: m["receivedDateTime"])  # oldest -> newest
 
     folder_id = client.ensure_folder() if not dry_run else ""
+    if MANAGE_CATEGORIES and not dry_run:
+        client.ensure_master_categories([(TAG1, TAG1_COLOR), (TAG2, TAG2_COLOR)])
 
     failures = 0
     for msg in msgs:
@@ -740,8 +805,39 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="Never prompt for sign-in; fail fast if a silent refresh isn't "
              "possible. Implied automatically when not attached to a terminal.")
     parser.add_argument(
+        "--tag1", metavar="NAME",
+        help=f"Category added to emails when processed (default: {TAG1!r}).")
+    parser.add_argument(
+        "--tag2", metavar="NAME",
+        help=f"Category added once the OneNote page is confirmed "
+             f"(default: {TAG2!r}).")
+    parser.add_argument(
+        "--folder", metavar="NAME",
+        help=f"Mail folder to move processed emails into "
+             f"(default: {DEST_FOLDER_NAME!r}).")
+    parser.add_argument(
+        "--manage-categories", action="store_true",
+        help="Create the categories in your Outlook master list with colors so "
+             "they show colored. Needs the MailboxSettings.ReadWrite scope; "
+             "re-run --login after enabling.")
+    parser.add_argument(
         "-v", "--verbose", action="store_true", help="Enable debug logging.")
     return parser.parse_args(argv)
+
+
+def _apply_overrides(args: argparse.Namespace) -> None:
+    """Apply CLI overrides onto the module-level config globals."""
+    global TAG1, TAG2, DEST_FOLDER_NAME, MANAGE_CATEGORIES
+    if args.tag1:
+        TAG1 = args.tag1
+    if args.tag2:
+        TAG2 = args.tag2
+    if args.folder:
+        DEST_FOLDER_NAME = args.folder
+    if args.manage_categories:
+        MANAGE_CATEGORIES = True
+        if "MailboxSettings.ReadWrite" not in SCOPES:
+            SCOPES.append("MailboxSettings.ReadWrite")
 
 
 def main(argv=None) -> int:
@@ -752,6 +848,7 @@ def main(argv=None) -> int:
         datefmt="%Y-%m-%d %H:%M:%S",
         stream=sys.stdout,
     )
+    _apply_overrides(args)
     if args.login:
         return login()
     if args.list_sections:

@@ -36,7 +36,8 @@ For each Kindle email from `do-not-reply@amazon.com`, the script:
 2. Extracts the download links from the email HTML **by anchor text**:
    - `Download PDF` / `Download Searchable PDF` → the PDF
    - `Download text file` → the OCR `.txt` file (only if that link exists)
-3. Downloads the PDF (always) and the text file (when present).
+3. Downloads the PDF (always) and the text file (when present), and tags the
+   email with the **`Kindle Scribe`** Outlook category.
 4. Creates a OneNote page in your configured section containing:
    - **Title:** `MM/DD/YY - <note name>`
    - A bold **Download PDF** hyperlink to the original Amazon link
@@ -44,7 +45,11 @@ For each Kindle email from `do-not-reply@amazon.com`, the script:
    - **Recognized Text** (the OCR text) — only when a `.txt` file exists
    - **Attachments:** the PDF, and the `.txt` when present
    - **Note Printout:** the PDF rendered inline
-5. Moves the email into the **Kindle Scribe** mail folder (created if needed).
+5. Tags the email with the **`Uploaded to OneNote`** category (confirmation),
+   then moves it into the **Kindle Scribe** mail folder (created if needed).
+
+The category names and the folder are configurable — see
+[Categories & folder](#categories--folder).
 
 The inbox is treated as the queue: every matching email still in the inbox is
 processed each run, so backlogged or batched notes are all handled.
@@ -62,10 +67,10 @@ processed each run, so backlogged or batched notes are all handled.
   uploading; if a link has expired and returns an HTML error page instead, it
   raises and **leaves the email in the inbox** rather than creating a broken
   page and losing the note.
-- **No duplicates.** After a page is created the email is tagged with a
-  category (`Kindle Imported`) *before* it is moved. If a later step fails and
-  the email is processed again, the script retries only the move — it never
-  creates a second page.
+- **No duplicates.** After a page is created the email is tagged with the
+  `Uploaded to OneNote` category *before* it is moved. If a later step fails
+  and the email is processed again, the script sees that tag and retries only
+  the move — it never creates a second page.
 - **Survives throttling/blips.** Microsoft Graph (`429`/`5xx`, honoring
   `Retry-After`) and Amazon downloads are retried with exponential backoff.
 - **Auto re-auth.** Access tokens are refreshed silently from the cached
@@ -74,6 +79,36 @@ processed each run, so backlogged or batched notes are all handled.
 - **Unicode-safe.** The page is sent as UTF-8, so accented/non-ASCII OCR text
   and note titles render correctly. The page's creation date is also set to
   when the note was emailed.
+
+### Categories & folder
+
+Each processed email is tagged with two Outlook categories and then filed into
+a folder — all configurable:
+
+| What | Default | Override |
+|---|---|---|
+| Category added when a note is processed | `Kindle Scribe` | `--tag1` / `KINDLE_TAG1` |
+| Category added once the page is confirmed | `Uploaded to OneNote` | `--tag2` / `KINDLE_TAG2` |
+| Folder processed emails are moved to | `Kindle Scribe` | `--folder` / `KINDLE_DEST_FOLDER` |
+
+```bash
+python kindle_to_onenote.py --tag1 "Scribe" --tag2 "In OneNote" --folder "Scribe Notes"
+```
+
+**Do the categories need to exist first?** No. Assigning a category to a message
+works whether or not it's in your Outlook *master category list* — the script
+does this with its normal `Mail.ReadWrite` permission. The only catch is that a
+category not in the master list shows **without a color** until you add it
+there (in Outlook, or automatically — see below).
+
+**Want colored categories?** Add `--manage-categories` (or
+`KINDLE_MANAGE_CATEGORIES=true`). The script will then create the two
+categories in your master list with colors (`KINDLE_TAG1_COLOR` /
+`KINDLE_TAG2_COLOR`, Outlook `presetN` names). This needs the extra
+**`MailboxSettings.ReadWrite`** delegated permission — add it to your Azure app
+registration and re-run `--login` to consent. If the permission is missing the
+script logs a warning and carries on (emails still get categorized, just
+uncolored).
 
 ### Known limitation: 4 MB page size
 
@@ -117,6 +152,9 @@ device-code flow.
    **Delegated permissions**, add:
    - `Notes.ReadWrite`
    - `Mail.ReadWrite`
+   - `MailboxSettings.ReadWrite` — *only* if you want colored categories via
+     `--manage-categories` (see [Categories & folder](#categories--folder)).
+     You can skip it and add it later.
 
    (`offline_access`, `openid`, and `profile` are added automatically by MSAL.)
 7. Copy the **Application (client) ID** — this is your `KINDLE_CLIENT_ID`.
@@ -200,6 +238,8 @@ python kindle_to_onenote.py --login          # one-time interactive sign-in (als
 python kindle_to_onenote.py --dry-run        # download + report, but don't write to OneNote or move mail
 python kindle_to_onenote.py --verbose        # debug logging
 python kindle_to_onenote.py --list-sections  # print your OneNote section IDs and exit (setup helper)
+python kindle_to_onenote.py --tag1 NAME --tag2 NAME --folder NAME   # override categories / mail folder
+python kindle_to_onenote.py --manage-categories                    # also create colored categories (needs extra scope)
 ```
 
 ---
@@ -285,8 +325,11 @@ All settings are read from the environment (and from `.env` if present).
 | `KINDLE_SECTION_ID` | *(required)* | OneNote **section** ID to create pages in |
 | `KINDLE_TENANT_ID` | `consumers` | `consumers` for personal accounts; tenant ID for work/school |
 | `KINDLE_SENDER` | `do-not-reply@amazon.com` | Sender address used to find Kindle emails |
-| `KINDLE_DEST_FOLDER` | `Kindle Scribe` | Mail folder for processed emails (created if missing) |
-| `KINDLE_PROCESSED_CATEGORY` | `Kindle Imported` | Category stamped on imported emails (duplicate guard) |
+| `KINDLE_DEST_FOLDER` | `Kindle Scribe` | Mail folder for processed emails (created if missing); `--folder` |
+| `KINDLE_TAG1` | `Kindle Scribe` | Category added when a note is processed; `--tag1` |
+| `KINDLE_TAG2` | `Uploaded to OneNote` | Category added after the page is confirmed (duplicate guard); `--tag2` |
+| `KINDLE_MANAGE_CATEGORIES` | `false` | Create the categories (colored) in the master list; needs `MailboxSettings.ReadWrite`; `--manage-categories` |
+| `KINDLE_TAG1_COLOR` / `KINDLE_TAG2_COLOR` | `preset7` / `preset4` | Outlook preset colors used when managing categories |
 | `KINDLE_TIMEZONE` | `America/New_York` | IANA timezone for titles/expiry |
 | `KINDLE_EXPIRY_DAYS` | `7` | Amazon link lifetime shown on the page |
 | `KINDLE_MAX_PER_RUN` | `25` | Max emails processed per run |
