@@ -143,41 +143,62 @@ re-send. (Most single notes are well under 4 MB.)
 
 ## Setup
 
-### 1. Create an Azure App Registration
+### 1. Create an Azure app registration
 
-This gives the script permission to read your mail and write to OneNote using
-delegated permissions. **No client secret is required** — it uses the MSAL
-device-code flow.
+The script signs in **as you** (delegated permissions) and needs **no client
+secret** — it uses the MSAL device-code flow. The registration exists only to
+give you a **client ID** to authenticate with. It's free.
 
-1. Go to <https://entra.microsoft.com> → **App registrations** → **New
-   registration**.
-2. Name it (e.g. `Kindle to OneNote`).
-3. Supported account types:
-   - Personal Microsoft account → *Personal Microsoft accounts only* (or
-     "Accounts in any org directory and personal Microsoft accounts").
-   - Work/school account → *Accounts in this organizational directory only*.
-4. Leave **Redirect URI** blank. Click **Register**.
-5. On the app's **Authentication** page, enable **Allow public client flows**
-   (this turns on the device-code flow). Save.
-6. On **API permissions** → **Add a permission** → **Microsoft Graph** →
-   **Delegated permissions**, search for and add each of these (copy/paste the
-   exact names into the permission search box):
+Open the app registrations page and click **+ New registration**:
+
+> 🔗 **[Microsoft Entra → App registrations](https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade)**
+> — the same page is in the [Azure portal](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade)
+> under **Microsoft Entra ID → App registrations**.
+
+Then fill in the registration:
+
+1. **Name** — anything you'll recognize; it's just a label shown to you at
+   sign-in. For example: `Kindle to OneNote`.
+2. **Supported account types** — match the account your Kindle emails go to:
+   - Personal Microsoft account (outlook.com / hotmail / live) →
+     **Personal Microsoft accounts only**.
+   - Work/school (Microsoft 365) account → **Accounts in this organizational
+     directory only**.
+3. **Redirect URI** — leave it **blank**, then click **Register**.
+
+Now configure the new app:
+
+4. **Authentication** → turn on **Allow public client flows** → **Save**. This
+   enables the device-code sign-in, and is why no client secret is needed.
+5. **API permissions** → **Add a permission** → **Microsoft Graph** →
+   **Delegated permissions** (delegated = the app acts on your behalf, the
+   right choice for a personal tool), then add:
+
+   | Permission | Why the script needs it | Required? |
+   |---|---|---|
+   | `Notes.ReadWrite` | Create the OneNote page (printout + attachments) in your section | **Yes** |
+   | `Mail.ReadWrite` | Find the Kindle emails, tag them with categories, and move them to a folder | **Yes** |
+   | `MailboxSettings.ReadWrite` | Create the *colored* categories in your mailbox's master list | Only for `--manage-categories` |
+
+   Search for each name in the permission picker (copy/paste these):
 
    ```text
    Notes.ReadWrite
    Mail.ReadWrite
    ```
 
-   Optionally — *only* if you want colored categories via `--manage-categories`
-   (see [Categories & folder](#categories--folder)); you can skip it and add it
-   later:
+   Optional — add this only if you want colored categories
+   (see [Categories & folder](#categories--folder)); you can add it later:
 
    ```text
    MailboxSettings.ReadWrite
    ```
 
-   (`offline_access`, `openid`, and `profile` are added automatically by MSAL.)
-7. Copy the **Application (client) ID** — this is your `KINDLE_CLIENT_ID`.
+   `offline_access`, `openid`, and `profile` are added automatically by MSAL —
+   don't add them here. On a personal account you don't need "Grant admin
+   consent"; you'll consent at first sign-in.
+6. **Overview** → copy the **Application (client) ID**. That's your
+   `KINDLE_CLIENT_ID`.
 
 ### 2. Install
 
