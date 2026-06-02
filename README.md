@@ -15,6 +15,11 @@ work queue.
 It runs unattended on a schedule (cron, systemd timer, or Windows Task
 Scheduler) on Windows, Linux, Raspberry Pi, or a small VM/container.
 
+> ℹ️ **AI-generated project.** This code and documentation were written with AI
+> assistance (originally with ChatGPT, then refactored and extended with
+> Claude). See [AI disclosure & disclaimer](#ai-disclosure--disclaimer) before
+> relying on it.
+
 ---
 
 ## How it works
@@ -310,6 +315,32 @@ scribe-to-onenote/
 ├── LICENSE
 └── README.md
 ```
+
+## AI disclosure & disclaimer
+
+This project was created with the help of AI tools. The original script was
+generated with **OpenAI's ChatGPT**, and it was later reviewed, refactored,
+documented, and extended with **Anthropic's Claude** (via Claude Code). The
+ideas, requirements, testing, and final decisions are the maintainer's; the AI
+tools were used to draft and improve the code and docs.
+
+A few things to keep in mind:
+
+- **Review before you run.** AI-generated code can contain mistakes or make
+  assumptions that don't fit your setup. Read the script and understand what it
+  does — especially that it reads your mailbox, downloads files, and writes to
+  your OneNote — before pointing it at a real account.
+- **Test first.** Use `--dry-run` and a non-critical OneNote section/notebook
+  until you're confident in the behavior.
+- **Third-party services.** This tool talks to Microsoft Graph and Amazon's
+  Kindle email links. It isn't affiliated with, endorsed by, or supported by
+  Microsoft, Amazon, OpenAI, or Anthropic. Kindle, OneNote, Outlook, ChatGPT,
+  and Claude are trademarks of their respective owners.
+- **No warranty.** As stated in the [MIT License](LICENSE), the software is
+  provided "as is", without warranty of any kind. You are responsible for how
+  you use it and for keeping your own data backed up.
+
+Contributions and fixes are welcome regardless of how the code was authored.
 
 ## License
 
