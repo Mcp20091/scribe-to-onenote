@@ -183,13 +183,15 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env` and set at least:
+Only **two** variables are required:
 
 - `KINDLE_CLIENT_ID` — the Application (client) ID from step 1
 - `KINDLE_SECTION_ID` — the OneNote section to write to (see below)
 
-All other settings have sensible defaults (see `.env.example`). The `.env`
-file is git-ignored so your IDs never get committed.
+Everything else has a sensible default. The full list — including the
+categories, mail folder, timezone, and retry/timeout knobs — is in the
+[Configuration reference](#configuration-reference). The `.env` file is
+git-ignored so your IDs never get committed.
 
 #### Finding your section ID
 
@@ -317,25 +319,53 @@ Install it as `/etc/logrotate.d/kindle` and adjust the path.
 
 ## Configuration reference
 
-All settings are read from the environment (and from `.env` if present).
+All configuration is done with environment variables — there are **no settings
+to edit inside the script**. Each variable can be set in your shell/scheduler
+**or** in the `.env` file next to the script (copied from
+[`.env.example`](.env.example)).
 
-| Variable | Default | Description |
-|---|---|---|
-| `KINDLE_CLIENT_ID` | *(required)* | Azure app **Application (client) ID** |
-| `KINDLE_SECTION_ID` | *(required)* | OneNote **section** ID to create pages in |
-| `KINDLE_TENANT_ID` | `consumers` | `consumers` for personal accounts; tenant ID for work/school |
-| `KINDLE_SENDER` | `do-not-reply@amazon.com` | Sender address used to find Kindle emails |
-| `KINDLE_DEST_FOLDER` | `Kindle Scribe` | Mail folder for processed emails (created if missing); `--folder` |
-| `KINDLE_TAG1` | `Kindle Scribe` | Category added when a note is processed; `--tag1` |
-| `KINDLE_TAG2` | `Uploaded to OneNote` | Category added after the page is confirmed (duplicate guard); `--tag2` |
-| `KINDLE_MANAGE_CATEGORIES` | `false` | Create the categories (colored) in the master list; needs `MailboxSettings.ReadWrite`; `--manage-categories` |
-| `KINDLE_TAG1_COLOR` / `KINDLE_TAG2_COLOR` | `preset7` / `preset4` | Outlook preset colors used when managing categories |
-| `KINDLE_TIMEZONE` | `America/New_York` | IANA timezone for titles/expiry |
-| `KINDLE_EXPIRY_DAYS` | `7` | Amazon link lifetime shown on the page |
-| `KINDLE_MAX_PER_RUN` | `25` | Max emails processed per run |
-| `KINDLE_HTTP_TIMEOUT` | `60` | HTTP timeout (seconds) |
-| `KINDLE_MAX_RETRIES` | `4` | Retry attempts for throttled/transient HTTP errors |
-| `KINDLE_TOKEN_CACHE` | `./token_cache.json` | MSAL token cache path |
+**Precedence (highest wins):**
+
+```
+CLI flag  >  real environment variable  >  .env file  >  built-in default
+```
+
+So a value already exported in the environment overrides the same key in
+`.env`, and a command-line flag (e.g. `--folder`) overrides both.
+
+### Required (2)
+
+You must set these two — everything else has a working default. The script
+exits with a clear message if either is missing.
+
+| Variable | Description |
+|---|---|
+| `KINDLE_CLIENT_ID` | Azure app **Application (client) ID** (from [Azure setup](#1-create-an-azure-app-registration)) |
+| `KINDLE_SECTION_ID` | OneNote **section** ID to create pages in (find it with `--list-sections`) |
+
+### Optional (defaults shown)
+
+| Variable | Default | Flag | Description |
+|---|---|---|---|
+| `KINDLE_TENANT_ID` | `consumers` | — | `consumers` for personal accounts; tenant ID for work/school |
+| `KINDLE_SENDER` | `do-not-reply@amazon.com` | — | Sender address used to find Kindle emails |
+| `KINDLE_DEST_FOLDER` | `Kindle Scribe` | `--folder` | Mail folder for processed emails (created if missing) |
+| `KINDLE_TAG1` | `Kindle Scribe` | `--tag1` | Category added when a note is processed |
+| `KINDLE_TAG2` | `Uploaded to OneNote` | `--tag2` | Category added after the page is confirmed (duplicate guard) |
+| `KINDLE_MANAGE_CATEGORIES` | `false` | `--manage-categories` | Create the categories (colored) in the master list; needs `MailboxSettings.ReadWrite` |
+| `KINDLE_TAG1_COLOR` | `preset7` | — | Outlook preset color for tag 1 (only when managing categories) |
+| `KINDLE_TAG2_COLOR` | `preset4` | — | Outlook preset color for tag 2 (only when managing categories) |
+| `KINDLE_TIMEZONE` | `America/New_York` | — | IANA timezone for titles/expiry |
+| `KINDLE_EXPIRY_DAYS` | `7` | — | Amazon link lifetime shown on the page |
+| `KINDLE_MAX_PER_RUN` | `25` | — | Max emails processed per run |
+| `KINDLE_HTTP_TIMEOUT` | `60` | — | HTTP timeout (seconds) |
+| `KINDLE_MAX_RETRIES` | `4` | — | Retry attempts for throttled/transient HTTP errors |
+| `KINDLE_TOKEN_CACHE` | `./token_cache.json` | — | MSAL token cache path |
+
+> **Scheduling tip:** cron/systemd often don't load your `.env` working
+> directory the way an interactive shell does. Either rely on `.env` (the
+> script loads it from next to itself, using absolute paths) or set the
+> variables explicitly in the unit/crontab.
 
 ---
 
