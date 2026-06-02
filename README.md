@@ -24,18 +24,44 @@ Scheduler) on Windows, Linux, Raspberry Pi, or a small VM/container.
 
 ## How it works
 
-```
-Kindle Scribe  ──email──▶  Outlook Inbox  ──▶  this script  ──▶  OneNote page
-                                                   │
-                                                   ├─▶ tag email: "Kindle Scribe", then
-                                                   │              "Uploaded to OneNote"
-                                                   └─▶ move email to the "Kindle Scribe" folder
+```mermaid
+flowchart TD
+    K["📝 Kindle Scribe<br/>emails a note (PDF + optional OCR text)"]
+    I["📥 Outlook Inbox<br/>(the work queue)"]
+    F["🔎 Find mail from the Kindle sender<br/>do-not-reply@amazon.com"]
+    D["⬇️ Download PDF<br/>+ text file (when present)"]
+    T1["🏷️ Tag email:<br/>'Kindle Scribe'"]
+    P["📄 Create OneNote page<br/>in your section"]
+    T2["🏷️ Tag email:<br/>'Uploaded to OneNote'"]
+    M["📂 Move email to the<br/>'Kindle Scribe' folder"]
+
+    K --> I --> F --> D --> T1 --> P --> T2 --> M
 ```
 
-(The category names and the destination folder are the defaults — all
-configurable; see [Categories & folder](#categories--folder).)
+The inbox is the queue: every matching email still in the Inbox is processed
+each run, so backlogged or batched notes are all handled. After a note is
+imported, its email is tagged and moved out so the Inbox stays clean.
 
-For each Kindle email from `do-not-reply@amazon.com`, the script:
+### What it reads, writes, and the names it uses
+
+Every Outlook/OneNote name below is a **default you can change** — so you can
+point it at your own folder, categories, sender, or section:
+
+| In the workflow | What it is | Default | Set with |
+|---|---|---|---|
+| Watches for notes | the **mail folder** it reads | **Inbox** (fixed) | — |
+| Matches the sender | who the email is **from** | `do-not-reply@amazon.com` | `KINDLE_SENDER` |
+| Writes the note | the **OneNote section** | *(required — no default)* | `KINDLE_SECTION_ID` |
+| Tag on pickup | an Outlook **category** | `Kindle Scribe` | `--tag1` / `KINDLE_TAG1` |
+| Tag when confirmed | an Outlook **category** | `Uploaded to OneNote` | `--tag2` / `KINDLE_TAG2` |
+| Files the email | the destination **mail folder** | `Kindle Scribe` | `--folder` / `KINDLE_DEST_FOLDER` |
+
+(The two categories are also a duplicate guard — see
+[Categories & folder](#categories--folder).)
+
+### Step by step
+
+For each Kindle email from the configured sender, the script:
 
 1. Reads the subject (the quoted note name) and the received timestamp.
 2. Extracts the download links from the email HTML **by anchor text**:
@@ -52,9 +78,6 @@ For each Kindle email from `do-not-reply@amazon.com`, the script:
    - **Note Printout:** the PDF rendered inline
 5. Tags the email with the **`Uploaded to OneNote`** category (confirmation),
    then moves it into the **Kindle Scribe** mail folder (created if needed).
-
-The inbox is treated as the queue: every matching email still in the inbox is
-processed each run, so backlogged or batched notes are all handled.
 
 > **About the TXT fix:** earlier versions of this script sometimes missed or
 > mis-assigned the text file because they guessed based on link order. This
