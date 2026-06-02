@@ -197,7 +197,15 @@ atexit.register(_save_cache)
 # Authentication (MSAL device-code flow)
 # --------------------------------------------------------------------------
 
-def get_access_token() -> str:
+def get_access_token(interactive: bool = True) -> str:
+    """Return an access token, refreshing silently from the cache when possible.
+
+    When the cache can't satisfy the request and ``interactive`` is True, the
+    device-code flow runs (prints a URL + code to complete on any device). When
+    ``interactive`` is False -- e.g. an unattended cron/systemd run on a
+    headless box -- it raises instead of blocking on a prompt nobody can see,
+    telling you to re-authenticate with ``--login``.
+    """
     if CLIENT_ID == "YOUR-APP-CLIENT-ID":
         raise SystemExit(
             "CLIENT_ID is not configured. Set KINDLE_CLIENT_ID in your .env "
@@ -216,10 +224,16 @@ def get_access_token() -> str:
         if result and "access_token" in result:
             return result["access_token"]
 
+    if not interactive:
+        raise SystemExit(
+            "No valid cached credentials and not running interactively "
+            "(headless/scheduled). Re-authenticate once with:\n"
+            "    python kindle_to_onenote.py --login")
+
     flow = app.initiate_device_flow(scopes=SCOPES)
     if "user_code" not in flow:
         raise RuntimeError(f"Failed to create device flow: {flow}")
-    # URL + code the user types on any browser to sign in.
+    # URL + code the user types on any browser/device to sign in.
     print(flow["message"], flush=True)
     result = app.acquire_token_by_device_flow(flow)  # blocks until completed
     if "access_token" not in result:
@@ -653,14 +667,14 @@ def process_message(client: GraphClient, msg: dict, folder_id: str,
     client.move_message(msg_id, folder_id)
 
 
-def run(dry_run: bool = False) -> int:
+def run(dry_run: bool = False, interactive: bool = True) -> int:
     if SECTION_ID == "PASTE-YOUR-SECTION-ID-HERE":
         raise SystemExit(
             "SECTION_ID is not configured. Set KINDLE_SECTION_ID in your .env "
             "file (see .env.example) before running. Tip: run with "
             "--list-sections to discover it.")
 
-    client = GraphClient(get_access_token)
+    client = GraphClient(lambda: get_access_token(interactive=interactive))
 
     ids = client.find_kindle_message_ids(max_to_fetch=MAX_PER_RUN)
     if not ids:
@@ -685,9 +699,16 @@ def run(dry_run: bool = False) -> int:
     return 1 if failures else 0
 
 
+def login() -> int:
+    """Run the interactive device-code sign-in once and exit (setup helper)."""
+    get_access_token(interactive=True)
+    print("Authenticated. Token cached at:", CACHE_PATH)
+    return 0
+
+
 def list_sections() -> int:
     """Print every OneNote section and its ID (a setup-time helper)."""
-    client = GraphClient(get_access_token)
+    client = GraphClient(lambda: get_access_token(interactive=True))
     sections = client.list_sections()
     if not sections:
         print("No OneNote sections found for this account.")
@@ -711,6 +732,14 @@ def parse_args(argv=None) -> argparse.Namespace:
         "--list-sections", action="store_true",
         help="List your OneNote sections and their IDs, then exit (setup helper).")
     parser.add_argument(
+        "--login", action="store_true",
+        help="Run the interactive device-code sign-in once and exit. Use this "
+             "for first-time setup on a headless box, then schedule normal runs.")
+    parser.add_argument(
+        "--non-interactive", action="store_true",
+        help="Never prompt for sign-in; fail fast if a silent refresh isn't "
+             "possible. Implied automatically when not attached to a terminal.")
+    parser.add_argument(
         "-v", "--verbose", action="store_true", help="Enable debug logging.")
     return parser.parse_args(argv)
 
@@ -723,9 +752,14 @@ def main(argv=None) -> int:
         datefmt="%Y-%m-%d %H:%M:%S",
         stream=sys.stdout,
     )
+    if args.login:
+        return login()
     if args.list_sections:
         return list_sections()
-    return run(dry_run=args.dry_run)
+    # Only allow the interactive device-code prompt when a human is attached
+    # (a TTY) and hasn't opted out. Cron/systemd runs are non-interactive.
+    interactive = sys.stdin.isatty() and not args.non_interactive
+    return run(dry_run=args.dry_run, interactive=interactive)
 
 
 if __name__ == "__main__":

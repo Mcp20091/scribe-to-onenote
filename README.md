@@ -178,24 +178,53 @@ and run `GET https://graph.microsoft.com/v1.0/me/onenote/sections`.
 
 ### 4. First run (authenticate)
 
-Run it once interactively to complete sign-in:
+Sign in once with the `--login` command:
 
 ```bash
-python kindle_to_onenote.py
+python kindle_to_onenote.py --login
 ```
 
-It prints a URL and a device code. Open the URL in any browser, enter the
-code, and approve the requested permissions. A `token_cache.json` file is
-written next to the script (git-ignored — it holds your refresh token).
-Subsequent runs refresh the token silently with no prompts.
+It prints a URL and a device code. Open the URL on **any device** (your
+laptop or phone — no browser is needed on the server itself), enter the code,
+and approve the requested permissions. A `token_cache.json` file is written
+next to the script (git-ignored — it holds your refresh token). Subsequent
+runs refresh the token silently with no prompts.
+
+This is the [device-code flow](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-device-code),
+which is designed for headless machines — see [Headless / LXC / VM notes](#headless--lxc--vm-notes).
 
 Useful flags:
 
 ```bash
+python kindle_to_onenote.py --login          # one-time interactive sign-in (also use to re-auth)
 python kindle_to_onenote.py --dry-run        # download + report, but don't write to OneNote or move mail
 python kindle_to_onenote.py --verbose        # debug logging
 python kindle_to_onenote.py --list-sections  # print your OneNote section IDs and exit (setup helper)
 ```
+
+---
+
+## Headless / LXC / VM notes
+
+This tool is built to run unattended on a headless box (e.g. a Proxmox LXC
+container, a VM, or a Raspberry Pi). A few things that make that work cleanly:
+
+- **No GUI or browser needed on the server.** Authentication uses the OAuth
+  **device-code flow**: you run `--login` once over SSH, then complete the
+  sign-in on your phone/laptop. The token cache is a plain file, so there's no
+  dependency on a desktop keyring/Secret Service (which containers usually lack).
+- **Scheduled runs never block on a prompt.** When the script isn't attached to
+  a terminal (cron, systemd timer) it runs **non-interactively**: if the cached
+  token can't be refreshed silently it exits immediately with a clear message
+  telling you to re-run `--login`, instead of hanging on a device code nobody
+  can see. (You can force this with `--non-interactive`.)
+- **Persistent, writable cache path.** Make sure `token_cache.json` lives on a
+  persistent, writable path for the user the scheduler runs as — not a tmpfs.
+  Set `KINDLE_TOKEN_CACHE` to pin its location if needed, and use absolute
+  paths in cron/systemd so every run finds the same cache.
+- **Re-authenticating later.** If the refresh token is ever invalidated (you
+  change your Microsoft password, revoke the app, or leave it idle past the
+  ~90-day window), just SSH in and run `--login` again.
 
 ---
 
@@ -235,8 +264,9 @@ Arguments: C:\path\to\scribe-to-onenote\kindle_to_onenote.py
 Start in:  C:\path\to\scribe-to-onenote
 ```
 
-Trigger it every 15 minutes (or your preference). Do the very first run
-manually so the device-code sign-in can complete.
+Trigger it every 15 minutes (or your preference). Run
+`python kindle_to_onenote.py --login` manually once first so the device-code
+sign-in can complete.
 
 ### Log rotation (Linux)
 
