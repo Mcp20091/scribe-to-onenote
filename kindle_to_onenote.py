@@ -320,18 +320,18 @@ class GraphClient:
     # -- Mail ---------------------------------------------------------------
 
     def find_kindle_message_ids(self, max_to_fetch: int = MAX_PER_RUN) -> List[str]:
-        """Return Kindle email IDs in the inbox, oldest first.
+        """Return Kindle email IDs in the inbox.
 
         Prefers an exact ``$filter`` on the sender address (immediate and
-        precise). Falls back to ``$search`` if the mailbox rejects the
-        filter (e.g. some server configurations), which is fuzzier and
-        relies on the search index.
+        precise). Note: Graph rejects ``$filter`` on ``from`` combined with
+        ``$orderby`` ("restriction or sort order too complex"), so we don't
+        sort here -- the caller sorts the fetched messages by received time.
+        Falls back to ``$search`` if the mailbox rejects the filter.
         """
         url = f"{GRAPH_BASE}/me/mailFolders/inbox/messages"
         try:
             params = {
                 "$filter": f"from/emailAddress/address eq '{KINDLE_SENDER}'",
-                "$orderby": "receivedDateTime asc",
                 "$select": "id",
                 "$top": max_to_fetch,
             }
@@ -464,16 +464,18 @@ class ATagParser(HTMLParser):
 
 
 def extract_download_links(body_html: str) -> Dict[str, str]:
-    """Return {"pdf": url, "txt": url?} based strictly on the <a> tag text.
+    """Return {"pdf": url, "txt": url?} based on each <a> tag's text.
 
     The Kindle email uses distinct anchor text for each file:
         - "Download PDF" / "Download Searchable PDF"  -> PDF
         - "Download text file"                        -> OCR text file
 
-    Matching on the anchor text (rather than link order) is the fix for the
-    old TXT bug where the text file was missed or mis-assigned. If the anchor
-    text has been stripped by a mail client, we fall back to the first
-    amazon.com/gp/f.html link as the PDF only.
+    We classify by the anchor *text*, not the URL, because Amazon's PDF and
+    text-file links can use different hosts/paths (the old code required an
+    `amazon.com/gp/f.html` href and silently dropped the text-file link, which
+    uses a different URL). Any real http(s) link is accepted. If anchor text
+    was stripped by a mail client, we fall back to the first Amazon
+    `gp/f.html` URL as the PDF only (never guess a TXT link).
     """
     unescaped = htmlmod.unescape(body_html)
     parser = ATagParser()
@@ -481,17 +483,18 @@ def extract_download_links(body_html: str) -> Dict[str, str]:
 
     links: Dict[str, str] = {}
     for href, text in parser.links:
-        if not href or "amazon.com/gp/f.html" not in href:
+        if not href or not href.lower().startswith(("http://", "https://")):
             continue
         normalized = re.sub(r"\s+", " ", (text or "").strip().lower())
-        if "download text file" in normalized or "text file" in normalized:
+        if "text file" in normalized or "text document" in normalized:
             links.setdefault("txt", href)
-        elif "searchable pdf" in normalized or ("download" in normalized and "pdf" in normalized):
+        elif "pdf" in normalized:  # "Download PDF" or "Download Searchable PDF"
             links.setdefault("pdf", href)
 
-    # Fallback for the PDF only (never guess a TXT link).
+    # Fallback for the PDF only, if anchor text was stripped.
     if "pdf" not in links:
-        m = re.search(r'https://www\.amazon\.com/gp/f\.html[^"\'<>\s]+', unescaped)
+        m = re.search(r'https?://[^"\'<>\s]*amazon\.[^"\'<>\s]*/gp/f\.html[^"\'<>\s]*',
+                      unescaped)
         if m:
             links["pdf"] = m.group(0)
 
