@@ -25,7 +25,7 @@ import sys
 import time
 from datetime import datetime, timedelta
 from html.parser import HTMLParser
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 import msal
@@ -234,42 +234,56 @@ def get_access_token() -> str:
 class GraphClient:
     """Thin wrapper around the Graph REST API carrying the bearer token."""
 
-    def __init__(self, access_token: str):
-        self.token = access_token
+    def __init__(self, token_provider: Callable[[], str]):
+        # token_provider returns a fresh access token (MSAL refreshes silently).
+        self._token_provider = token_provider
+        self.token = token_provider()
 
-    def _auth(self, extra: Optional[Dict] = None) -> Dict[str, str]:
-        headers = {"Authorization": f"Bearer {self.token}"}
-        if extra:
-            headers.update(extra)
-        return headers
+    def _send(self, method: str, url: str, *,
+              json: Optional[dict] = None,
+              data: Optional[bytes] = None,
+              params: Optional[Dict] = None,
+              content_type: Optional[str] = None,
+              headers_extra: Optional[Dict] = None) -> requests.Response:
+        """Send an authenticated request, refreshing the token once on a 401.
+
+        Covers the edge case where the access token expires mid-run (e.g. a
+        long batch); MSAL hands back a refreshed token and we retry once.
+        """
+        def do() -> requests.Response:
+            headers = {"Authorization": f"Bearer {self.token}"}
+            if content_type:
+                headers["Content-Type"] = content_type
+            if headers_extra:
+                headers.update(headers_extra)
+            return http_request(method, url, headers=headers,
+                                json=json, data=data, params=params)
+
+        resp = do()
+        if resp.status_code == 401:
+            log.info("  Access token rejected (401); refreshing and retrying.")
+            self.token = self._token_provider()
+            resp = do()
+        resp.raise_for_status()
+        return resp
 
     def get(self, url: str, params: Optional[Dict] = None,
             headers_extra: Optional[Dict] = None) -> dict:
-        r = http_request("GET", url, headers=self._auth(headers_extra),
-                         params=params)
-        r.raise_for_status()
-        return r.json()
+        return self._send("GET", url, params=params,
+                          headers_extra=headers_extra).json()
 
     def post_json(self, url: str, payload: dict,
                   headers_extra: Optional[Dict] = None) -> dict:
-        headers = self._auth({"Content-Type": "application/json"})
-        if headers_extra:
-            headers.update(headers_extra)
-        r = http_request("POST", url, headers=headers, json=payload)
-        r.raise_for_status()
-        return r.json()
+        return self._send("POST", url, json=payload,
+                          content_type="application/json",
+                          headers_extra=headers_extra).json()
 
     def patch_json(self, url: str, payload: dict) -> dict:
-        headers = self._auth({"Content-Type": "application/json"})
-        r = http_request("PATCH", url, headers=headers, json=payload)
-        r.raise_for_status()
-        return r.json()
+        return self._send("PATCH", url, json=payload,
+                          content_type="application/json").json()
 
     def post_raw(self, url: str, body: bytes, content_type: str) -> requests.Response:
-        headers = self._auth({"Content-Type": content_type})
-        r = http_request("POST", url, headers=headers, data=body)
-        r.raise_for_status()
-        return r
+        return self._send("POST", url, data=body, content_type=content_type)
 
     # -- Mail ---------------------------------------------------------------
 
@@ -508,9 +522,16 @@ def build_onenote_multipart(
             'type="text/plain"></object>'
         )
 
+    # Declaring UTF-8 ensures non-ASCII OCR text/titles decode correctly, and
+    # <meta name="created"> sets the page's date to when the note was emailed.
+    safe_created = htmlmod.escape(received_iso_utc, quote=True)
     html_page = (
         "<!DOCTYPE html>"
-        f"<html><head><title>{safe_title}</title></head>"
+        "<html><head>"
+        '<meta charset="utf-8" />'
+        f'<meta name="created" content="{safe_created}" />'
+        f"<title>{safe_title}</title>"
+        "</head>"
         "<body>"
         f"<h2>{safe_title}</h2>"
         f'<p><b><a href="{htmlmod.escape(link_pdf, quote=True)}">Download PDF</a></b></p>'
@@ -529,7 +550,7 @@ def build_onenote_multipart(
     head = (
         f"--{boundary}{crlf}"
         f'Content-Disposition: form-data; name="Presentation"{crlf}'
-        f"Content-Type: text/html{crlf}{crlf}"
+        f"Content-Type: text/html; charset=utf-8{crlf}{crlf}"
         f"{html_page}{crlf}"
         f"--{boundary}{crlf}"
         f'Content-Disposition: form-data; name="scribe.pdf"; filename="kindle.pdf"{crlf}'
@@ -639,7 +660,7 @@ def run(dry_run: bool = False) -> int:
             "file (see .env.example) before running. Tip: run with "
             "--list-sections to discover it.")
 
-    client = GraphClient(get_access_token())
+    client = GraphClient(get_access_token)
 
     ids = client.find_kindle_message_ids(max_to_fetch=MAX_PER_RUN)
     if not ids:
@@ -666,7 +687,7 @@ def run(dry_run: bool = False) -> int:
 
 def list_sections() -> int:
     """Print every OneNote section and its ID (a setup-time helper)."""
-    client = GraphClient(get_access_token())
+    client = GraphClient(get_access_token)
     sections = client.list_sections()
     if not sections:
         print("No OneNote sections found for this account.")

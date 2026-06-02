@@ -63,6 +63,21 @@ processed each run, so backlogged or batched notes are all handled.
   creates a second page.
 - **Survives throttling/blips.** Microsoft Graph (`429`/`5xx`, honoring
   `Retry-After`) and Amazon downloads are retried with exponential backoff.
+- **Auto re-auth.** Access tokens are refreshed silently from the cached
+  refresh token; if one expires mid-run the request is retried once with a
+  fresh token (no device-code prompt).
+- **Unicode-safe.** The page is sent as UTF-8, so accented/non-ASCII OCR text
+  and note titles render correctly. The page's creation date is also set to
+  when the note was emailed.
+
+### Known limitation: 4 MB page size
+
+Microsoft Graph caps a OneNote page-creation request at **~4 MB**. Because the
+PDF is embedded in that request, a very large handwritten note (many pages, or
+high-detail ink) can exceed the limit and the upload will fail with a
+`413 "request too large"` error, logged for that note. The email is left in the
+inbox. If you hit this, split the note into smaller PDFs on the Scribe and
+re-send. (Most single notes are well under 4 MB.)
 
 ---
 
@@ -266,6 +281,9 @@ All settings are read from the environment (and from `.env` if present).
 - **PDF renders but text is missing** — the email had no OCR text file. Enable
   "Convert to text (OCR)" when sending from the Kindle to get a `Download text
   file` link.
+- **`413` / "request too large"** — the note exceeds Graph's ~4 MB page-creation
+  limit (see [Known limitation](#known-limitation-4-mb-page-size)). Split the
+  note into smaller PDFs and re-send.
 - **Auth prompts every run** — the token cache isn't being saved/found. Check
   the script can write `token_cache.json` (or set `KINDLE_TOKEN_CACHE` to a
   writable path), and that the same path is used each run (matters for cron —
